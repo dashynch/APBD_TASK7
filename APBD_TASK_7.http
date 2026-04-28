@@ -1,0 +1,36 @@
+@APBD_TASK_7_HostAddress = http://localhost:5041
+
+### Get a customer's rental history
+GET {{APBD_TASK_7_HostAddress}}/api/customers/1/rentals
+Accept: application/json
+
+### Get a non-existent customer (expect 404)
+GET {{APBD_TASK_7_HostAddress}}/api/customers/9999/rentals
+Accept: application/json
+
+### Add a new rental for customer 1
+POST {{APBD_TASK_7_HostAddress}}/api/customers/1/rentals
+Content-Type: application/json
+
+{
+  "id": 1010,
+  "rentalDate": "2025-05-05",
+  "movies": [
+    { "title": "Inception",    "rentalPrice": 2.2 },
+    { "title": "Interstellar", "rentalPrice": 3.2 }
+  ]
+}
+
+### Add a rental with an unknown movie (expect 404)
+POST {{APBD_TASK_7_HostAddress}}/api/customers/1/rentals
+Content-Type: application/json
+
+{
+  "id": 1011,
+  "rentalDate": "2025-05-06",
+  "movies": [
+    { "title": "Incepion", "rentalPrice": 2.2 }
+  ]
+}
+
+###
