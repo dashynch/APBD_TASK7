@@ -4,7 +4,15 @@ namespace APBD_TASK_7.Repositories;
 
 public interface IRentalRepository
 {
-    Task<CustomerRentalsResponse?> GetCustomerRentalsAsync(int customerId, CancellationToken cancellationToken);
+    Task<CustomerRentalsResponse?> GetCustomerRentalsAsync(int customerId);
 
-    Task CreateRentalAsync(int customerId, CreateRentalRequest request, CancellationToken cancellationToken);
+    Task CreateRentalAsync(int customerId, CreateRentalRequest request);
+
+    Task<CustomerDto?> GetCustomerAsync(int customerId);
+
+    Task AddCustomerAsync(CustomerDto customer);
+
+    Task UpdateCustomerAsync(int customerId, CustomerDto customer);
+
+    Task DeleteCustomerAsync(int customerId);
 }

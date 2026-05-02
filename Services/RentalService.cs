@@ -12,9 +12,33 @@ public class RentalService : IRentalService
         _rentalRepository = rentalRepository;
     }
 
-    public Task<CustomerRentalsResponse?> GetCustomerRentalsAsync(int customerId, CancellationToken cancellationToken)
-        => _rentalRepository.GetCustomerRentalsAsync(customerId, cancellationToken);
+    public Task<CustomerRentalsResponse?> GetCustomerRentalsAsync(int customerId)
+    {
+        return _rentalRepository.GetCustomerRentalsAsync(customerId);
+    }
 
-    public Task CreateRentalAsync(int customerId, CreateRentalRequest request, CancellationToken cancellationToken)
-        => _rentalRepository.CreateRentalAsync(customerId, request, cancellationToken);
+    public Task CreateRentalAsync(int customerId, CreateRentalRequest request)
+    {
+        return _rentalRepository.CreateRentalAsync(customerId, request);
+    }
+
+    public Task<CustomerDto?> GetCustomerAsync(int customerId)
+    {
+        return _rentalRepository.GetCustomerAsync(customerId);
+    }
+
+    public Task AddCustomerAsync(CustomerDto customer)
+    {
+        return _rentalRepository.AddCustomerAsync(customer);
+    }
+
+    public Task UpdateCustomerAsync(int customerId, CustomerDto customer)
+    {
+        return _rentalRepository.UpdateCustomerAsync(customerId, customer);
+    }
+
+    public Task DeleteCustomerAsync(int customerId)
+    {
+        return _rentalRepository.DeleteCustomerAsync(customerId);
+    }
 }

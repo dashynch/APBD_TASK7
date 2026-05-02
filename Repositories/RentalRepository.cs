@@ -6,8 +6,6 @@ namespace APBD_TASK_7.Repositories;
 
 public class RentalRepository : IRentalRepository
 {
-    private const string RentedStatusName = "Rented";
-
     private readonly string _connectionString;
 
     public RentalRepository(IConfiguration configuration)
@@ -16,95 +14,33 @@ public class RentalRepository : IRentalRepository
             ?? throw new InvalidOperationException("Missing 'Default' connection string.");
     }
 
-    public async Task<CustomerRentalsResponse?> GetCustomerRentalsAsync(int customerId, CancellationToken cancellationToken)
+    public async Task<CustomerRentalsResponse?> GetCustomerRentalsAsync(int customerId)
     {
         await using var connection = new SqlConnection(_connectionString);
-        await connection.OpenAsync(cancellationToken);
+        await connection.OpenAsync();
 
-        var customer = await GetCustomerAsync(connection, customerId, cancellationToken);
-        if (customer is null)
+        string firstName;
+        string lastName;
+
+        await using (var customerCommand = new SqlCommand(
+            "SELECT first_name, last_name FROM Customer WHERE customer_id = @customerId;",
+            connection))
         {
-            return null;
-        }
+            customerCommand.Parameters.AddWithValue("@customerId", customerId);
 
-        var response = new CustomerRentalsResponse
-        {
-            FirstName = customer.Value.FirstName,
-            LastName = customer.Value.LastName,
-            Rentals = await LoadRentalsAsync(connection, customerId, cancellationToken)
-        };
-
-        return response;
-    }
-
-    public async Task CreateRentalAsync(int customerId, CreateRentalRequest request, CancellationToken cancellationToken)
-    {
-        await using var connection = new SqlConnection(_connectionString);
-        await connection.OpenAsync(cancellationToken);
-
-        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(cancellationToken);
-
-        try
-        {
-            if (!await CustomerExistsAsync(connection, transaction, customerId, cancellationToken))
+            await using var customerReader = await customerCommand.ExecuteReaderAsync();
+            if (!await customerReader.ReadAsync())
             {
-                throw new NotFoundException($"Customer with id {customerId} was not found.");
+                return null;
             }
 
-            var movieIds = await ResolveMovieIdsAsync(connection, transaction, request.Movies, cancellationToken);
-
-            var statusId = await GetStatusIdAsync(connection, transaction, RentedStatusName, cancellationToken)
-                ?? throw new InvalidOperationException($"Status '{RentedStatusName}' is not configured in the database.");
-
-            await InsertRentalAsync(connection, transaction, request.Id, request.RentalDate, customerId, statusId, cancellationToken);
-
-            for (var i = 0; i < request.Movies.Count; i++)
-            {
-                await InsertRentalItemAsync(
-                    connection,
-                    transaction,
-                    rentalId: request.Id,
-                    movieId: movieIds[i],
-                    priceAtRental: request.Movies[i].RentalPrice,
-                    cancellationToken);
-            }
-
-            await transaction.CommitAsync(cancellationToken);
-        }
-        catch
-        {
-            await transaction.RollbackAsync(cancellationToken);
-            throw;
-        }
-    }
-
-    private static async Task<(string FirstName, string LastName)?> GetCustomerAsync(
-        SqlConnection connection,
-        int customerId,
-        CancellationToken cancellationToken)
-    {
-        const string sql = @"SELECT first_name, last_name
-                             FROM Customer
-                             WHERE customer_id = @customerId;";
-
-        await using var command = new SqlCommand(sql, connection);
-        command.Parameters.AddWithValue("@customerId", customerId);
-
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        if (!await reader.ReadAsync(cancellationToken))
-        {
-            return null;
+            firstName = customerReader.GetString(0);
+            lastName = customerReader.GetString(1);
         }
 
-        return (reader.GetString(0), reader.GetString(1));
-    }
+        var rentalsById = new Dictionary<int, RentalResponse>();
 
-    private static async Task<List<RentalResponse>> LoadRentalsAsync(
-        SqlConnection connection,
-        int customerId,
-        CancellationToken cancellationToken)
-    {
-        const string sql = @"
+        await using (var rentalsCommand = new SqlCommand(@"
             SELECT  r.rental_id,
                     r.rental_date,
                     r.return_date,
@@ -116,143 +52,202 @@ public class RentalRepository : IRentalRepository
             LEFT JOIN Rental_Item ri ON ri.rental_id = r.rental_id
             LEFT JOIN Movie       m  ON m.movie_id  = ri.movie_id
             WHERE   r.customer_id = @customerId
-            ORDER BY r.rental_id, m.title;";
-
-        await using var command = new SqlCommand(sql, connection);
-        command.Parameters.AddWithValue("@customerId", customerId);
-
-        var rentalsById = new Dictionary<int, RentalResponse>();
-
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        while (await reader.ReadAsync(cancellationToken))
+            ORDER BY r.rental_id, m.title;", connection))
         {
-            var rentalId = reader.GetInt32(0);
+            rentalsCommand.Parameters.AddWithValue("@customerId", customerId);
 
-            if (!rentalsById.TryGetValue(rentalId, out var rental))
+            await using var reader = await rentalsCommand.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
             {
-                rental = new RentalResponse
-                {
-                    Id = rentalId,
-                    RentalDate = reader.GetDateTime(1),
-                    ReturnDate = reader.IsDBNull(2) ? null : reader.GetDateTime(2),
-                    Status = reader.GetString(3),
-                    Movies = new List<RentalMovieResponse>()
-                };
-                rentalsById.Add(rentalId, rental);
-            }
+                var rentalId = reader.GetInt32(0);
 
-            if (!reader.IsDBNull(4))
-            {
-                rental.Movies.Add(new RentalMovieResponse
+                if (!rentalsById.TryGetValue(rentalId, out var rental))
                 {
-                    Title = reader.GetString(4),
-                    PriceAtRental = reader.GetDecimal(5)
-                });
+                    rental = new RentalResponse
+                    {
+                        Id = rentalId,
+                        RentalDate = reader.GetDateTime(1),
+                        ReturnDate = reader.IsDBNull(2) ? null : reader.GetDateTime(2),
+                        Status = reader.GetString(3),
+                        Movies = new List<RentalMovieResponse>()
+                    };
+                    rentalsById.Add(rentalId, rental);
+                }
+
+                if (!reader.IsDBNull(4))
+                {
+                    rental.Movies.Add(new RentalMovieResponse
+                    {
+                        Title = reader.GetString(4),
+                        PriceAtRental = reader.GetDecimal(5)
+                    });
+                }
             }
         }
 
-        return rentalsById.Values.ToList();
-    }
-
-    private static async Task<bool> CustomerExistsAsync(
-        SqlConnection connection,
-        SqlTransaction transaction,
-        int customerId,
-        CancellationToken cancellationToken)
-    {
-        const string sql = "SELECT 1 FROM Customer WHERE customer_id = @customerId;";
-
-        await using var command = new SqlCommand(sql, connection, transaction);
-        command.Parameters.AddWithValue("@customerId", customerId);
-
-        var result = await command.ExecuteScalarAsync(cancellationToken);
-        return result is not null;
-    }
-
-    private static async Task<List<int>> ResolveMovieIdsAsync(
-        SqlConnection connection,
-        SqlTransaction transaction,
-        List<CreateRentalMovieRequest> movies,
-        CancellationToken cancellationToken)
-    {
-        const string sql = "SELECT movie_id FROM Movie WHERE title = @title;";
-
-        var resolved = new List<int>(movies.Count);
-
-        foreach (var movie in movies)
+        return new CustomerRentalsResponse
         {
-            await using var command = new SqlCommand(sql, connection, transaction);
-            command.Parameters.AddWithValue("@title", movie.Title);
+            FirstName = firstName,
+            LastName = lastName,
+            Rentals = rentalsById.Values.ToList()
+        };
+    }
 
-            var movieId = await command.ExecuteScalarAsync(cancellationToken);
-            if (movieId is null)
+    public async Task CreateRentalAsync(int customerId, CreateRentalRequest request)
+    {
+        await using var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync();
+
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync();
+
+        try
+        {
+            await using (var customerCheck = new SqlCommand(
+                "SELECT 1 FROM Customer WHERE customer_id = @customerId;",
+                connection,
+                transaction))
             {
-                throw new NotFoundException($"Movie with title '{movie.Title}' was not found.");
+                customerCheck.Parameters.AddWithValue("@customerId", customerId);
+                var exists = await customerCheck.ExecuteScalarAsync();
+                if (exists is null)
+                {
+                    throw new NotFoundException($"Customer with id {customerId} was not found.");
+                }
             }
 
-            resolved.Add((int)movieId);
+            var movieIds = new List<int>();
+            foreach (var movie in request.Movies)
+            {
+                await using var movieCommand = new SqlCommand(
+                    "SELECT movie_id FROM Movie WHERE title = @title;",
+                    connection,
+                    transaction);
+                movieCommand.Parameters.AddWithValue("@title", movie.Title);
+
+                var movieId = await movieCommand.ExecuteScalarAsync();
+                if (movieId is null)
+                {
+                    throw new NotFoundException($"Movie with title '{movie.Title}' was not found.");
+                }
+
+                movieIds.Add((int)movieId);
+            }
+
+            int statusId;
+            await using (var statusCommand = new SqlCommand(
+                "SELECT status_id FROM Status WHERE name = @name;",
+                connection,
+                transaction))
+            {
+                statusCommand.Parameters.AddWithValue("@name", "Rented");
+                var statusResult = await statusCommand.ExecuteScalarAsync();
+                if (statusResult is null)
+                {
+                    throw new InvalidOperationException("Status 'Rented' is not configured in the database.");
+                }
+                statusId = (int)statusResult;
+            }
+
+            await using (var rentalCommand = new SqlCommand(@"
+                SET IDENTITY_INSERT Rental ON;
+                INSERT INTO Rental (rental_id, rental_date, return_date, customer_id, status_id)
+                VALUES (@rentalId, @rentalDate, NULL, @customerId, @statusId);
+                SET IDENTITY_INSERT Rental OFF;", connection, transaction))
+            {
+                rentalCommand.Parameters.AddWithValue("@rentalId", request.Id);
+                rentalCommand.Parameters.AddWithValue("@rentalDate", request.RentalDate);
+                rentalCommand.Parameters.AddWithValue("@customerId", customerId);
+                rentalCommand.Parameters.AddWithValue("@statusId", statusId);
+
+                await rentalCommand.ExecuteNonQueryAsync();
+            }
+
+            for (var i = 0; i < request.Movies.Count; i++)
+            {
+                await using var itemCommand = new SqlCommand(
+                    @"INSERT INTO Rental_Item (rental_id, movie_id, price_at_rental)
+                      VALUES (@rentalId, @movieId, @priceAtRental);",
+                    connection,
+                    transaction);
+                itemCommand.Parameters.AddWithValue("@rentalId", request.Id);
+                itemCommand.Parameters.AddWithValue("@movieId", movieIds[i]);
+                itemCommand.Parameters.AddWithValue("@priceAtRental", request.Movies[i].RentalPrice);
+
+                await itemCommand.ExecuteNonQueryAsync();
+            }
+
+            await transaction.CommitAsync();
+        }
+        catch
+        {
+            await transaction.RollbackAsync();
+            throw;
+        }
+    }
+
+    public async Task<CustomerDto?> GetCustomerAsync(int customerId)
+    {
+        await using var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync();
+
+        await using var command = new SqlCommand(
+            "SELECT customer_id, first_name, last_name FROM Customer WHERE customer_id = @customerId;",
+            connection);
+        command.Parameters.AddWithValue("@customerId", customerId);
+
+        await using var reader = await command.ExecuteReaderAsync();
+        if (!await reader.ReadAsync())
+        {
+            return null;
         }
 
-        return resolved;
+        return new CustomerDto
+        {
+            Id = reader.GetInt32(0),
+            FirstName = reader.GetString(1),
+            LastName = reader.GetString(2)
+        };
     }
 
-    private static async Task<int?> GetStatusIdAsync(
-        SqlConnection connection,
-        SqlTransaction transaction,
-        string statusName,
-        CancellationToken cancellationToken)
+    public async Task AddCustomerAsync(CustomerDto customer)
     {
-        const string sql = "SELECT status_id FROM Status WHERE name = @name;";
+        await using var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync();
 
-        await using var command = new SqlCommand(sql, connection, transaction);
-        command.Parameters.AddWithValue("@name", statusName);
+        await using var command = new SqlCommand(
+            "INSERT INTO Customer (first_name, last_name) VALUES (@firstName, @lastName);",
+            connection);
+        command.Parameters.AddWithValue("@firstName", customer.FirstName);
+        command.Parameters.AddWithValue("@lastName", customer.LastName);
 
-        var result = await command.ExecuteScalarAsync(cancellationToken);
-        return result is null ? null : (int)result;
+        await command.ExecuteNonQueryAsync();
     }
 
-    private static async Task InsertRentalAsync(
-        SqlConnection connection,
-        SqlTransaction transaction,
-        int rentalId,
-        DateTime rentalDate,
-        int customerId,
-        int statusId,
-        CancellationToken cancellationToken)
+    public async Task UpdateCustomerAsync(int customerId, CustomerDto customer)
     {
-        // The request supplies an explicit rental_id; the column is IDENTITY,
-        // so IDENTITY_INSERT must be toggled for the duration of the insert.
-        const string sql = @"
-            SET IDENTITY_INSERT Rental ON;
-            INSERT INTO Rental (rental_id, rental_date, return_date, customer_id, status_id)
-            VALUES (@rentalId, @rentalDate, NULL, @customerId, @statusId);
-            SET IDENTITY_INSERT Rental OFF;";
+        await using var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync();
 
-        await using var command = new SqlCommand(sql, connection, transaction);
-        command.Parameters.AddWithValue("@rentalId", rentalId);
-        command.Parameters.AddWithValue("@rentalDate", rentalDate);
+        await using var command = new SqlCommand(
+            "UPDATE Customer SET first_name = @firstName, last_name = @lastName WHERE customer_id = @customerId;",
+            connection);
         command.Parameters.AddWithValue("@customerId", customerId);
-        command.Parameters.AddWithValue("@statusId", statusId);
+        command.Parameters.AddWithValue("@firstName", customer.FirstName);
+        command.Parameters.AddWithValue("@lastName", customer.LastName);
 
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        await command.ExecuteNonQueryAsync();
     }
 
-    private static async Task InsertRentalItemAsync(
-        SqlConnection connection,
-        SqlTransaction transaction,
-        int rentalId,
-        int movieId,
-        decimal priceAtRental,
-        CancellationToken cancellationToken)
+    public async Task DeleteCustomerAsync(int customerId)
     {
-        const string sql = @"INSERT INTO Rental_Item (rental_id, movie_id, price_at_rental)
-                             VALUES (@rentalId, @movieId, @priceAtRental);";
+        await using var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync();
 
-        await using var command = new SqlCommand(sql, connection, transaction);
-        command.Parameters.AddWithValue("@rentalId", rentalId);
-        command.Parameters.AddWithValue("@movieId", movieId);
-        command.Parameters.AddWithValue("@priceAtRental", priceAtRental);
+        await using var command = new SqlCommand(
+            "DELETE FROM Customer WHERE customer_id = @customerId;",
+            connection);
+        command.Parameters.AddWithValue("@customerId", customerId);
 
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        await command.ExecuteNonQueryAsync();
     }
 }

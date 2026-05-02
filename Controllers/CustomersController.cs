@@ -17,11 +17,9 @@ public class CustomersController : ControllerBase
     }
 
     [HttpGet("{id:int}/rentals")]
-    [ProducesResponseType(typeof(CustomerRentalsResponse), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> GetCustomerRentals(int id, CancellationToken cancellationToken)
+    public async Task<IActionResult> GetCustomerRentals(int id)
     {
-        var customer = await _rentalService.GetCustomerRentalsAsync(id, cancellationToken);
+        var customer = await _rentalService.GetCustomerRentalsAsync(id);
         if (customer is null)
         {
             return NotFound($"Customer with id {id} was not found.");
@@ -31,17 +29,11 @@ public class CustomersController : ControllerBase
     }
 
     [HttpPost("{id:int}/rentals")]
-    [ProducesResponseType(StatusCodes.Status201Created)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> CreateRental(
-        int id,
-        [FromBody] CreateRentalRequest request,
-        CancellationToken cancellationToken)
+    public async Task<IActionResult> CreateRental(int id, [FromBody] CreateRentalRequest request)
     {
         try
         {
-            await _rentalService.CreateRentalAsync(id, request, cancellationToken);
+            await _rentalService.CreateRentalAsync(id, request);
         }
         catch (NotFoundException ex)
         {
@@ -49,5 +41,38 @@ public class CustomersController : ControllerBase
         }
 
         return CreatedAtAction(nameof(GetCustomerRentals), new { id }, null);
+    }
+
+    [HttpGet("{id:int}")]
+    public async Task<IActionResult> GetCustomer(int id)
+    {
+        var customer = await _rentalService.GetCustomerAsync(id);
+        if (customer is null)
+        {
+            return NotFound($"Customer with id {id} was not found.");
+        }
+
+        return Ok(customer);
+    }
+
+    [HttpPost]
+    public async Task<IActionResult> AddCustomer([FromBody] CustomerDto customer)
+    {
+        await _rentalService.AddCustomerAsync(customer);
+        return Ok();
+    }
+
+    [HttpPut("{id:int}")]
+    public async Task<IActionResult> UpdateCustomer(int id, [FromBody] CustomerDto customer)
+    {
+        await _rentalService.UpdateCustomerAsync(id, customer);
+        return Ok();
+    }
+
+    [HttpDelete("{id:int}")]
+    public async Task<IActionResult> DeleteCustomer(int id)
+    {
+        await _rentalService.DeleteCustomerAsync(id);
+        return Ok();
     }
 }
