@@ -16,3 +16,5 @@ public interface IRentalService
 
     Task DeleteCustomerAsync(int customerId);
 }
+
+  
